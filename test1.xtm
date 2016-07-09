@@ -16,7 +16,7 @@
           )
       (with-node moon
         (name "moon")
-        (color 1. 1. 1.) ; coloring doesn't work properly yet (does it???)
+        (color 1. 1. 1.)
         (scale .5 .5 .5)
         (parent moon-orbit))
       (with-node moon-orbit
@@ -60,7 +60,7 @@
         (name "borgcube")
         (translate .95 0 0)
         (scale .5 .5 .5)
-        (color 1 0 0)
+        (color 0 1 0)
         (parent borgcube-orbit)
         (animate (/ 1 30)
           (lambda (node time dtime)
@@ -117,6 +117,67 @@
         #t))
     ))
 
+(with-node (build_sphere 1)
+  (name "testsphere"))
+
+(begin
+  (let ((i 0))
+    (dotimes (i 10000)
+      (with-node (build_cube)
+        (freenode)))
+  (print_scene_graph)))
+(begin
+  (scene_clear)
+  (let ((i 0)
+        (lastnode 0)
+        (basenode (build_sphere 0))
+        (parentnode (build_sphere 0)))
+    (with-node basenode
+      (with-node parentnode
+        (parent basenode))
+      (animate (/ 1.0 2)
+        (lambda (node time dtime)
+          (set! lastnode 0)
+          (println 'parentnode: parentnode 'lastnode: lastnode)
+          (with-node parentnode
+            (freenode))
+          (dotimes (i 10)
+            (with-node (build_sphere 1)
+              ;(translate 0 (* i (* (sin (* time 0.01)) 0.01)) 0)
+              (translate 0 0.5 0)
+              (scale 0.999 0.999 0.999)
+              (color 1 0 0)
+              (rotate_node (* (sin (* time 0.001)) 0.1)  0 0 1)
+              (parent lastnode)
+              (set! lastnode (get_current_node_id))
+              ))
+          (set! parentnode (build_sphere 0))
+          (set! lastnode parentnode)
+          #t
+          )))))
+
 
 (println (get_cube_verts))
 (xtm_make_node "cube"  (get_cube_verts) (* 12 3)  1.0 1.0 1.0)
+
+(begin
+  (scene_clear)
+  (let ((i 0)
+        (basenode (build_sphere 0))
+        (parentnode (build_sphere 0)))
+      (with-node basenode
+        (name "basenode")
+        (with-node parentnode
+          (name "parentnode")
+          (parent basenode))
+        (animate (/ 1.0 16)
+          (lambda (node time dtime)
+            (with-node basenode ; will stop looping when basenode is removed
+              (println 'parentnode: parentnode)
+              (with-node parentnode
+                (freenode))
+              (set! parentnode (build_sphere 0))
+              (with-node parentnode
+                (name "parentnode"))
+              (print_scene_graph)
+              ))))))

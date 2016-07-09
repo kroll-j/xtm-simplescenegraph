@@ -15,7 +15,7 @@
 
 (bind-func make_scene_root
   (lambda()
-    (List (scene_node (xtm_make_node "root" null 0 1.0 1.0 1.0) null null 0) null)))
+    (List (scene_node (xtm_make_node (strdup "root") null 0 1.0 1.0 1.0) null null 0) null)))
 
 (bind-alias scene_list List{scene_node*})
 (bind-val scene_root scene_list* (make_scene_root))
@@ -79,7 +79,7 @@
       #t
       #f)))
 
-(bind-val _scene_dummynode scene_node* (scene_node (xtm_make_node "root" null 0 1.0 1.0 1.0) null null 0))
+(bind-val _scene_dummynode scene_node* (scene_node (xtm_make_node (strdup "dummy") null 0 1.0 1.0 1.0) null null 0))
 (bind-func _currentnode
     (lambda ()
       (let ((node (scene_find_node current-node)))
@@ -98,21 +98,6 @@
   (lambda (id)
     (set! current-node id)))
 
-(bind-func scene_build_node
-  "build a scene_node and reparent it to scene graph (root or current-node)"
-  (lambda (xnode:xtm_node*)
-    (let ((node:scene_node* (halloc))
-          (current:scene_node* (_currentnode)))
-      ; make empty node
-      (tfill! node xnode (convert (car scene_root)) null (_scene_next_id))
-      ; add node to scene_root's or current-node's children list
-      (if (not (null? current))
-        (tset! current 2
-          (convert (cons node (convert (tref current 2)))))
-        (tset! (car scene_root) 2
-          (convert (cons node (convert (tref (car scene_root) 2))))))
-      node)))
-
 (bind-func scene_parent
   "get node parent"
   (lambda (node:scene_node*)
@@ -123,11 +108,35 @@
   (lambda (node:scene_node* parent:scene_node*)
     (let ((oldparent:scene_node* (convert (tref node 1)))
           (oldp_children:scene_list* (if (not (null? oldparent)) (convert (tref oldparent 2)) null)))
+      ;(if (null? parent)
+      ;  (begin
+      ;    (printf "reparent null: nodep=%p " node) (println node))
+      ;  (begin
+      ;    (printf "reparent: nodep=%p (%d, '%s') " node (tref node 3) (tref (tref node 0) 0))
+      ;    (if (not (null? oldparent))
+      ;      (printf "oldparent=%p (%d, '%s')\n" oldparent (tref oldparent 3) (tref (tref oldparent 0) 0))
+      ;      (printf "oldparent=null\n"))
+      ;    void))
       ; remove from old parent's children list
       (if (not (null? oldparent))
-        (tset! oldparent 2 (convert
-          (filter (lambda (n:scene_node*) (neq n node))
-            oldp_children)))))
+        (let ((oldlen (length (convert (tref oldparent 2) scene_list*)))
+              (newlen 0))
+          (tset! oldparent 2 (convert
+            (filter
+              (lambda (n:scene_node*)
+                ; compare id, not ptr
+                (<> (tref n 3) (tref node 3)))
+              oldp_children)))
+          (set! newlen (length (convert (tref oldparent 2) scene_list*)))
+          (if (<> newlen (- oldlen 1)) ; check if the child was actually removed
+            (begin
+              (printf "*** error in scene_parent: node=%p, newparent=%p, oldparent=%p: " node parent oldparent)
+              (if (= (- oldlen newlen) 0)
+                (printf "node not found in parent's children list\n")
+                (printf "multiple nodes (%d) removed from parent's children list\n" (- oldlen newlen)))
+              (printf "oldlen=%d newlen=%d\n" oldlen newlen)
+              )
+            ))))
     ; set parent ptr
     (tset! node 1 (convert parent))
     ; add to parent's children list
@@ -136,11 +145,26 @@
         (convert (cons node (convert (tref parent 2))))))
     void))
 
+(bind-func scene_build_node
+  "build a scene_node and reparent it to scene graph (root or current-node)"
+  (lambda (xnode:xtm_node*)
+    (let ((node:scene_node* (halloc)))
+      ; make empty node
+      (tfill! node xnode null null (_scene_next_id))
+      ; reparent the node
+      (cond
+        ((eq (_currentnode) _scene_dummynode)
+          (printf "scene_build_node: current-node %d not found, resetting to root\n" current-node)
+          (set! current-node 0)))
+      (scene_parent node (_currentnode))
+      node)))
+
 ; tmp -- free everything owned by an xtm_node
+; i guess this should be in graphics-pipeline.xtm
 (bind-func _xtm_free_node
   (let ((i:i32 0))
     (lambda (node:xtm_node*)
-      ; (free (tref node 0))      ; don't free name -- might not be on heap or zone?
+      (free (tref node 0))        ; name  XXXX ok?
       (free (tref node 1))        ; transmat
       (dotimes (i (tref node 3))  ; recursively free children...
         (_xtm_free_node (pref-ptr (tref node 4) i)))
@@ -152,6 +176,7 @@
 (bind-func scene_free
   "free and remove a node from scene graph"
   (lambda (node:scene_node*)
+    ;(printf "free_node %p %d '%s'\n" node (tref node 3) (tref (tref node 0) 0))
     (scene_parent node null)    ; unlink from scene graph
     (_xtm_free_node (tref node 0))  ; free xtm_node stuff
     (free (tref node 0))        ; free xtm_node ptr
@@ -236,7 +261,9 @@
   (lambda (snode name)
     (if (not (null? snode)) (begin
       (let ((node:xtm_node* (xnode snode)))
-        (tset! node 0 name))))
+        ;(printf "node_name: old name '%s' (%p)\n" (tref node 0) (tref node 0))
+        (free (tref node 0))
+        (tset! node 0 (strdup name)))))
     void))
 
 (define scene-animate-node-scm
@@ -287,7 +314,7 @@
     (let ((node (_currentnode)))
       (if (eq node _scene_dummynode)
         (begin (printf "not freeing dummy node...\n") void)
-        (begin (scene_free (_currentnode)) void)))))
+        (begin (scene_free node) void)))))
 (bind-func identity
   "set current-node's transformation matrix to identity"
   (lambda ()
@@ -343,7 +370,7 @@
     (scene_for-each
       (lambda (node:scene_node* depth:i64)
         (dotimes (depth depth) (printf "."))
-        (printf "#%d: %s\n" (tref node 3) (tref (tref node 0) 0))))))
+        (printf "#%d: %s (%p)\n" (tref node 3) (tref (tref node 0) 0) node)))))
 
 
 ; ============= models / 'primitives' =============
@@ -497,7 +524,7 @@
   (lambda (node:xtm_node*)
     (let ((origmesh:xtm_mesh* (tref node 6))
           (newmesh:xtm_mesh* (clone_xmesh origmesh))
-          (clone:xtm_node* (xtm_make_node (tref node 0)  null 0  1.0 1.0 1.0)))
+          (clone:xtm_node* (xtm_make_node (strdup (tref node 0))  null 0  1.0 1.0 1.0)))
       ; set the new mesh
       (tset! clone 6 newmesh)
       ; for now, leave name, transmat, parent, children, num_children etc alone
@@ -513,22 +540,8 @@
 (bind-func build_node:[i64]*
   "build an empty node"
   (lambda ()
-    (let ((snode (scene_build_node (xtm_make_node "node" null 0 1.0 1.0 1.0))))
+    (let ((snode (scene_build_node (xtm_make_node (strdup "node") null 0 1.0 1.0 1.0))))
       (tref snode 3))))
-
-      '(pfill! verts  -1. -1. -1.   1. -1. -1.   1.  1. -1.  ; front
-                      1.  1. -1.  -1.  1. -1.  -1. -1. -1.
-                     -1. -1.  1.  -1. -1. -1.  -1.  1. -1.  ; left
-                     -1. -1.  1.  -1.  1. -1.  -1.  1.  1.
-                      1. -1.  1.  -1. -1.  1.   1.  1.  1.  ; back
-                     -1.  1.  1.   1.  1.  1.  -1. -1.  1.
-                      1. -1. -1.   1. -1.  1.   1.  1. -1.  ; right
-                      1.  1. -1.   1. -1.  1.   1.  1.  1.
-                      1. -1. -1.  -1. -1. -1.  -1. -1.  1.  ; top
-                      1. -1. -1.  -1. -1.  1.   1. -1.  1.
-                      1.  1. -1.  -1.  1. -1.  -1.  1.  1.  ; bottom
-                      1.  1. -1.  -1.  1.  1.   1.  1.  1.
-                     )
 
 (bind-func get_cube_verts
   (let ((i 0)
@@ -562,7 +575,7 @@
         (let* ((index (pref indices i))
                (srcvert (pref-ptr verts (* index 3)))
                (trivert (pref-ptr triverts (* i 3))))
-          (println index (pref srcvert 0) (pref srcvert 1) (pref srcvert 2))
+          ;(println index (pref srcvert 0) (pref srcvert 1) (pref srcvert 2))
           (pfill! trivert (pref srcvert 0) (pref srcvert 1) (pref srcvert 2))
           ))
       triverts)))
@@ -603,14 +616,15 @@
     (let ((model:xtm_node* (convert null))
           (cubeverts:float* (get_cube_verts))
           (tricount 12))
-      (set! model (xtm_make_node "cube"  cubeverts (convert (* tricount 3))  1.0 1.0 1.0))
+      (set! model (xtm_make_node (strdup "cube")  cubeverts (convert (* tricount 3))  1.0 1.0 1.0))
       (generate_cube_normals (tref model 6))
     model)))
+
 
 (bind-func build_cube:[i64]*
   "build a cube"
   (lambda ()
-    (let* ((cube:xtm_node* (clone_xnode (create_cube_model)))
+    (let* ((cube:xtm_node* (create_cube_model))
            (snode:scene_node* (scene_build_node cube)))
       (tref snode 3))))
 
