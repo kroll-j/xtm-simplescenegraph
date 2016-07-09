@@ -1,0 +1,728 @@
+(sys:load "libs/core/math.xtm")
+(sys:load "libs/core/adt.xtm")
+(sys:load "libs/external/graphics-pipeline.xtm")
+
+
+; ============= data types, globals =============
+
+; 0: model
+; 1: parent:scene_node*
+; 2: children:List{scene_node*}*
+; 3: id
+; (parent and children must be casted
+; because the scene_node type isn't known at this time)
+(bind-type scene_node <xtm_node*,i8*,i8*,i64>)
+
+(bind-func make_scene_root
+  (lambda()
+    (List (scene_node (xtm_make_node "root" null 0 1.0 1.0 1.0) null null 0) null)))
+
+(bind-alias scene_list List{scene_node*})
+(bind-val scene_root scene_list* (make_scene_root))
+
+; for with-node macro
+(bind-val current-node i64 0)
+
+
+(bind-func _scene_next_id
+  (let ((id:i64 0))
+    (lambda ()
+      (inc id 1)
+      id)))
+
+; generic equality comparison for pointers
+; to get rid of some of the '(convert someptr i8*)'
+; ideally, '=' and '<>' would be generic...
+(bind-func eq:[bool,!a*,!b*]*
+  (lambda(p0 p1)
+    (= (convert p0 i8*) (convert p1 i8*))))
+(bind-func neq:[bool,!a*,!b*]*
+  (lambda(p0 p1)
+    (<> (convert p0 i8*) (convert p1 i8*))))
+
+
+; ============= node management stuff =============
+
+(bind-func xnode
+  "get a scene_node's xtm_node"
+  (lambda (node:scene_node*)
+    (tref node 0)))
+
+(bind-func scene_every:[bool,[bool,!a]*]*
+  (lambda (func)
+    (let
+      ((visit
+        (lambda (lst:scene_list*)
+          (every
+            (lambda (node:scene_node*)
+              (if (func node)
+                (visit (convert (tref node 2)))
+                #f))
+            lst))))
+      (visit scene_root))))
+
+; walk the scene graph and find the node with given id
+; this will be slow with larger graphs, something like a hash would be better
+(bind-func scene_find_node:[scene_node*,i64]*
+  (lambda (id:i64)
+    (let ((foundnode:scene_node* (convert null)))
+      (scene_every
+        (lambda (node:scene_node*)
+          (if (= (tref node 3) id)
+            (begin (set! foundnode node) #f)
+            #t)))
+      foundnode)))
+
+(bind-func node_exists:[bool,i64]*
+  (lambda (id:i64)
+    (if (not (null? (scene_find_node id)))
+      #t
+      #f)))
+
+(bind-val _scene_dummynode scene_node* (scene_node (xtm_make_node "root" null 0 1.0 1.0 1.0) null null 0))
+(bind-func _currentnode
+    (lambda ()
+      (let ((node (scene_find_node current-node)))
+        (if (not (null? node))
+          node
+          (begin
+            (printf "error: scene node #%d not found\n" current-node)
+            _scene_dummynode)))))  ; return dummy node to operate on
+
+; wrappers for getting/setting current-node from scheme
+(bind-func get_current_node_id
+  (lambda ()
+    (current-node)))
+
+(bind-func set_current_node_id
+  (lambda (id)
+    (set! current-node id)))
+
+(bind-func scene_build_node
+  "build a scene_node and reparent it to scene graph (root or current-node)"
+  (lambda (xnode:xtm_node*)
+    (let ((node:scene_node* (halloc))
+          (current:scene_node* (_currentnode)))
+      ; make empty node
+      (tfill! node xnode (convert (car scene_root)) null (_scene_next_id))
+      ; add node to scene_root's or current-node's children list
+      (if (not (null? current))
+        (tset! current 2
+          (convert (cons node (convert (tref current 2)))))
+        (tset! (car scene_root) 2
+          (convert (cons node (convert (tref (car scene_root) 2))))))
+      node)))
+
+(bind-func scene_parent
+  "get node parent"
+  (lambda (node:scene_node*)
+    (convert (tref node 1) scene_node*)))
+
+(bind-func scene_parent
+  "reparent a node"
+  (lambda (node:scene_node* parent:scene_node*)
+    (let ((oldparent:scene_node* (convert (tref node 1)))
+          (oldp_children:scene_list* (if (not (null? oldparent)) (convert (tref oldparent 2)) null)))
+      ; remove from old parent's children list
+      (if (not (null? oldparent))
+        (tset! oldparent 2 (convert
+          (filter (lambda (n:scene_node*) (neq n node))
+            oldp_children)))))
+    ; set parent ptr
+    (tset! node 1 (convert parent))
+    ; add to parent's children list
+    (if (not (null? parent))
+      (tset! parent 2
+        (convert (cons node (convert (tref parent 2))))))
+    void))
+
+; tmp -- free everything owned by an xtm_node
+(bind-func _xtm_free_node
+  (let ((i:i32 0))
+    (lambda (node:xtm_node*)
+      ; (free (tref node 0))      ; don't free name -- might not be on heap or zone?
+      (free (tref node 1))        ; transmat
+      (dotimes (i (tref node 3))  ; recursively free children...
+        (_xtm_free_node (pref-ptr (tref node 4) i)))
+      (free (tref node 4))        ; free children ptr
+      ; xxxxx todo: free meshes, vbos
+      (free (tref node 6))        ; free meshes ptr
+      )))
+
+(bind-func scene_free
+  "free and remove a node from scene graph"
+  (lambda (node:scene_node*)
+    (scene_parent node null)    ; unlink from scene graph
+    (_xtm_free_node (tref node 0))  ; free xtm_node stuff
+    (free (tref node 0))        ; free xtm_node ptr
+    (free node)))
+
+(bind-func scene_for-each:[void,!a]*
+  "apply a function on each scene node, depth-first"
+  (lambda (func)
+    (let ((visit (lambda (lst depth)
+      (for-each
+        (lambda (node:scene_node*)
+          (begin
+            (visit (convert (tref node 2)) (+ depth 1))
+            (func node depth))
+          void)
+        lst))))
+        (visit scene_root 0)
+      void)))
+
+(bind-func scene_clear
+  (lambda()
+    (scene_for-each (lambda (node:scene_node* depth:i64)
+      (if (> depth 0)
+        (scene_free node))
+      (set! current-node 0)
+      void))))
+
+; ============= matrix functions =============
+
+
+(bind-func _node_transmat
+  (lambda (node:scene_node*)
+    (tref (xnode node) 1)))
+
+(bind-func _node_transmat_apply:[void,scene_node*,!a]*
+  "transpose node's transformation matrix, apply a fn, then transpose it back"
+  (let ((tmpmat:float* (halloc 16)))
+    (lambda (node:scene_node* func)
+      (if (not (null? node)) (begin
+        (mtransf (_node_transmat node) 4 4 tmpmat)
+        (func tmpmat)
+        (mtransf tmpmat 4 4 (_node_transmat node))))
+        void)))
+
+(bind-func node_identity
+  "set node's transformation matrix to identity"
+  (lambda (node:scene_node*)
+    (_node_transmat_apply node (lambda(mat) (fill_identity_matrix mat)))
+    void))
+
+(bind-func node_translate:[void,scene_node*,!a,!b,!c]*
+  "translate node"
+  (lambda (node:scene_node* x y z)
+    (_node_transmat_apply node (lambda(mat) (translate_matrix mat (convert x) (convert y) (convert z))))
+    void))
+
+(bind-func node_rotate:[void,scene_node*,!a,!b,!c,!d]*
+  "rotate node"
+  (lambda (node:scene_node* alpha x y z)
+    (_node_transmat_apply node (lambda(mat) (rotate_matrix mat (convert alpha) (convert x) (convert y) (convert z))))
+    void))
+
+(bind-func node_scale:[void,scene_node*,!a,!b,!c]*
+  "scale node"
+  (lambda (node:scene_node* x y z)
+    (_node_transmat_apply node (lambda(mat) (scale_matrix mat (convert x) (convert y) (convert z))))
+    void))
+
+; xxx todo: doesn't work yet, colors multiple nodes for some reason
+(bind-func node_color:[void,scene_node*,!a,!b,!c]*
+  "set node color"
+  (lambda (snode:scene_node* r g b)
+    (if (not (null? snode)) (begin
+      ; xxxxx todo: change all meshes (and children too?)
+      (let ((node:xtm_node* (xnode snode))
+            (mesh:xtm_mesh* (tref node 6))
+            (diffuse:float* (tref mesh 2)))
+        (pfill! diffuse (convert r) (convert g) (convert b) 1.0))))
+        void))
+
+(bind-func node_name:[void,scene_node*,i8*]*
+  (lambda (snode name)
+    (if (not (null? snode)) (begin
+      (let ((node:xtm_node* (xnode snode)))
+        (tset! node 0 name))))
+    void))
+
+(define scene-animate-node-scm
+  (lambda (id time dtime func)
+    (if (<> (node_exists id) 0)
+      (with-node id
+        (let ((next_time (+ time (* 44100. dtime))))
+          (if (func id time dtime)
+            (callback next_time scene-animate-node-scm id next_time dtime func)))))))
+
+; ============= convenience macros and functions =============
+
+; works, but not thread-safe?
+; todo: should return the last sexpr of body
+; XXX todo: think about what happens to current-node in case of syntax error in body (stays set)
+(bind-macro
+  "execute xtlang code with current-node"
+  (with-node node . body)
+    `(let ((prevnode current-node))
+        (set! current-node ,node)
+        ,@body
+        (set! current-node prevnode)
+        void))
+
+; scheme version
+(define-macro
+  (with-node node . body)
+  "execute scheme code with current-node"
+    `(let ((prevnode (get_current_node_id)))
+        (set_current_node_id ,node)
+        ,@body
+        (set_current_node_id prevnode)))
+
+
+
+; to be used with 'with-node' macro:
+(bind-func get_parent
+  "get current-node parent"
+  (lambda ()
+    (tref (scene_parent (_currentnode)) 1)))
+(bind-func parent
+  "set current-node parent"
+  (lambda (p:i64)
+    (scene_parent (_currentnode) (scene_find_node p))))
+(bind-func freenode
+  "free current-node"
+  (lambda ()
+    (let ((node (_currentnode)))
+      (if (eq node _scene_dummynode)
+        (begin (printf "not freeing dummy node...\n") void)
+        (begin (scene_free (_currentnode)) void)))))
+(bind-func identity
+  "set current-node's transformation matrix to identity"
+  (lambda ()
+    (node_identity (_currentnode))
+    void))
+;(bind-func translate:[void,!a,!b,!c]*
+;  "translate current-node"
+;  (lambda (x y z)
+;    (node_translate (_currentnode) x y z)
+;    void))
+(bind-func translate
+  "translate current-node"
+  (lambda (x:float y:float z:float)
+    (node_translate (_currentnode) x y z)
+    void))
+;(bind-func rotate:[void,!a,!b,!c,!d]*
+;  "rotate current-node"
+;  (lambda (alpha x y z)
+;    (node_rotate (_currentnode) alpha x y z)
+;    void))
+(bind-func rotate_node
+  "rotate current-node"
+  (lambda (alpha:float x:float y:float z:float)
+    (node_rotate (_currentnode) alpha x y z)
+    void))
+;(bind-func scale:[void,!a,!b,!c]*
+;  "scale current-node"
+;  (lambda (x y z)
+;    (node_scale (_currentnode) x y z)
+;    void))
+(bind-func scale
+  "scale current-node"
+  (lambda (x:float y:float z:float)
+    (node_scale (_currentnode) x y z)
+    void))
+;(bind-func color:[void,!a,!b,!c]*
+;  (lambda (r g b)
+;    (node_color (_currentnode) r g b)))
+(bind-func color
+  "set current-node color"
+  (lambda (r:float g:float b:float)
+    (node_color (_currentnode) r g b)))
+(bind-func name:[void,i8*]*
+  "set current-node name"
+  (lambda (n)
+    (node_name (_currentnode) n)))
+(define animate
+  (lambda (dtime fn)
+    (scene-animate-node-scm (get_current_node_id) (now) dtime fn)))
+
+(bind-func print_scene_graph
+  (lambda()
+    (scene_for-each
+      (lambda (node:scene_node* depth:i64)
+        (dotimes (depth depth) (printf "."))
+        (printf "#%d: %s\n" (tref node 3) (tref (tref node 0) 0))))))
+
+
+; ============= models / 'primitives' =============
+
+(bind-func normalise_verts
+  (lambda (verts:float* count scale)
+    (let ((i 0))
+      (dotimes (i count)
+        (let ((v (pref-ptr verts (* i 3))))
+          (vnormalise v 3 v)
+          (vsmul v scale 3 v))))
+    void))
+
+(bind-func get_octahedron_verts
+  (let ((verts:float* (halloc 72)))
+    (lambda ()
+      (pfill! verts  -1.  0. -1.   0.  1.  0.    1.  0. -1.
+                     -1.  0.  1.   0.  1.  0.   -1.  0. -1.
+                      1.  0.  1.   0.  1.  0.   -1.  0.  1.
+                      1.  0. -1.   0.  1.  0.    1.  0.  1.
+                      1.  0. -1.   0. -1.  0.   -1.  0. -1.
+                     -1.  0. -1.   0. -1.  0.   -1.  0.  1.
+                     -1.  0.  1.   0. -1.  0.    1.  0.  1.
+                      1.  0.  1.   0. -1.  0.    1.  0. -1.
+                     )
+      (normalise_verts verts 24 0.5)
+      verts)))
+
+(bind-func _trivert
+  (lambda (verts:float* i:i64)
+    (pref-ptr verts (* (% i 3) 3))))
+(bind-func _vcopy
+  (lambda (dst:float* src:float*)
+    (memcpy (convert dst) (convert src) 12)))
+(bind-func _vhalf
+  (lambda (src:float* dst:float* i1:i64 i2:i64 idst:i64)
+    (vvsum (_trivert src i1) (_trivert src i2) 3 (_trivert dst idst))
+    (vsmul (_trivert dst idst) 0.5 3 (_trivert dst idst))))
+
+(bind-func subdivide_tri
+  (let ((i 0))
+    (lambda (inverts:float* outverts:float*)
+      ; left/right/top triangle
+      (dotimes (i 3)
+        ;; 0
+        (_vhalf inverts outverts i (+ i 0) 0)
+        ;; (0+1)/2
+        (_vhalf inverts outverts i (+ i 1) 1)
+        ;; (0+2)/2
+        (_vhalf inverts outverts i (+ i 2) 2)
+        (set! outverts (pref-ptr outverts 9)))
+
+      ; center triangle
+      ;; (0+1)/2
+      (_vhalf inverts outverts 0 1 0)
+      ;; (1+2)/2
+      (_vhalf inverts outverts 1 2 1)
+      ;; (2+0)/2
+      (_vhalf inverts outverts 2 0 2)
+      (set! outverts (pref-ptr outverts 9))
+      void)))
+
+; just copy each sphere vertex to the normal.
+(bind-func generate_sphere_normals
+  (lambda (mesh:xtm_mesh*)
+    (let ((i 0)
+          (vbostride:i64 14)
+          (vbo:VBO* (tref mesh 0))
+          (vbodata:float* (convert (tref vbo 3)))
+          (vbodatasize:i64 (tref vbo 2))
+          (nverts:i64 (/ vbodatasize vbostride 4)))
+      (dotimes (i nverts)
+        ;; auto gen normal
+        (pfill! (pref-ptr vbodata (+ 4 (* i vbostride)))
+                (pref vbodata (+ 0 (* i vbostride)))
+                (pref vbodata (+ 1 (* i vbostride)))
+                (pref vbodata (+ 2 (* i vbostride))))
+        (vnormalise (pref-ptr vbodata (+ 4 (* i vbostride))) 3
+                    (pref-ptr vbodata (+ 4 (* i vbostride)))))
+      (glBindBuffer GL_ARRAY_BUFFER (tref vbo 0))
+      (glBufferData GL_ARRAY_BUFFER (tref vbo 2) (tref vbo 3) GL_STATIC_DRAW)
+      void)))
+
+
+(bind-func create_sphere_models
+  (lambda ()
+    (let ((models:|4,xtm_node*|* (halloc))
+          (facecount:i64 8)
+          (maxverts:i64 (* facecount 9 (convert (pow 4. 4.))))
+          (octaverts:float* (get_octahedron_verts))
+          (verts0:float* (halloc maxverts))
+          (verts1:float* (halloc maxverts))
+          (i 0)
+          (k 0))
+      ; start with the octahedron verts
+      (memcpy (convert verts0) (convert octaverts) (* facecount 3 3 4))
+      ; build 4 subdivided meshes
+      (dotimes (i 4)
+        (dotimes (k facecount)
+          (subdivide_tri (pref-ptr verts0 (* k 3 3)) (pref-ptr verts1 (* k 3 3 4))))
+        (normalise_verts verts1 (* facecount 4 3) 0.5)
+        (aset! models i (xtm_make_node "sphere"  verts1 (convert (* facecount 3 4))  1.0 1.0 1.0))
+        (generate_sphere_normals (tref (aref models i) 6))
+        (set! facecount (* facecount 4))
+        (let ((tmpverts verts0)) (set! verts0 verts1) (set! verts1 tmpverts)))  ; swap
+      (free verts0)
+      (free verts1)
+    models)))
+
+(bind-func get_sphere_model
+  "get ptr to sphere model (use with clone_xnode)"
+  (let ((models:|4,xtm_node*|* null))
+    (lambda (subdiv:i64)
+      (if (= models null)
+        (set! models (create_sphere_models)))
+      (dec subdiv 1)
+      (cond
+        ((< subdiv 0)
+          (aref models 0))
+        ((> subdiv 3)
+          (aref models 3))
+        (else
+          (aref models subdiv))))))
+
+(bind-func clone_vbo
+  (lambda (vbo:VBO*)
+    (let ((vbostride:i64 14)
+          (origvbodata:float* (convert (tref vbo 3)))
+          (vbodatasize:i64 (tref vbo 2))
+          (nverts:i64 (/ vbodatasize vbostride 4))
+          (newvbo:VBO* (xtm_build_mesh_vbo origvbodata (convert nverts))))  ; create new vbo
+      (memcpy (convert (tref newvbo 3)) (convert origvbodata) vbodatasize)  ; copy vbodata
+      (tset! newvbo 1 (tref vbo 1)) ; copy type
+      (glBindBuffer GL_ARRAY_BUFFER (tref newvbo 0))
+      (glBufferData GL_ARRAY_BUFFER (tref newvbo 2) (tref newvbo 3) GL_STATIC_DRAW)
+      newvbo)))
+
+(bind-func clone_xmesh
+  (lambda (mesh:xtm_mesh*)
+    (let ((i 0)
+          (origvbo:VBO* (tref mesh 0))
+          (newvbo:VBO* (clone_vbo origvbo))
+          (newmesh:xtm_mesh* (halloc)))
+      (tfill! newmesh newvbo (tref mesh 1) (tref mesh 2) (tref mesh 3)
+        (tref mesh 4) (tref mesh 5) (tref mesh 6) (tref mesh 7) (tref mesh 8))
+      newmesh)))
+
+(bind-func clone_xnode
+  (lambda (node:xtm_node*)
+    (let ((origmesh:xtm_mesh* (tref node 6))
+          (newmesh:xtm_mesh* (clone_xmesh origmesh))
+          (clone:xtm_node* (xtm_make_node (tref node 0)  null 0  1.0 1.0 1.0)))
+      ; set the new mesh
+      (tset! clone 6 newmesh)
+      ; for now, leave name, transmat, parent, children, num_children etc alone
+      clone)))
+
+(bind-func build_sphere:[i64,i64]*
+  "build a sphere, created from a subdivided octahedron"
+  (lambda (subdiv:i64)
+    (let ((sphere:xtm_node* (clone_xnode (get_sphere_model subdiv)))
+          (snode:scene_node* (scene_build_node sphere)))
+      (tref snode 3))))
+
+(bind-func build_node:[i64]*
+  "build an empty node"
+  (lambda ()
+    (let ((snode (scene_build_node (xtm_make_node "node" null 0 1.0 1.0 1.0))))
+      (tref snode 3))))
+
+      '(pfill! verts  -1. -1. -1.   1. -1. -1.   1.  1. -1.  ; front
+                      1.  1. -1.  -1.  1. -1.  -1. -1. -1.
+                     -1. -1.  1.  -1. -1. -1.  -1.  1. -1.  ; left
+                     -1. -1.  1.  -1.  1. -1.  -1.  1.  1.
+                      1. -1.  1.  -1. -1.  1.   1.  1.  1.  ; back
+                     -1.  1.  1.   1.  1.  1.  -1. -1.  1.
+                      1. -1. -1.   1. -1.  1.   1.  1. -1.  ; right
+                      1.  1. -1.   1. -1.  1.   1.  1.  1.
+                      1. -1. -1.  -1. -1. -1.  -1. -1.  1.  ; top
+                      1. -1. -1.  -1. -1.  1.   1. -1.  1.
+                      1.  1. -1.  -1.  1. -1.  -1.  1.  1.  ; bottom
+                      1.  1. -1.  -1.  1.  1.   1.  1.  1.
+                     )
+
+(bind-func get_cube_verts
+  (let ((i 0)
+        (verts:float* (halloc 24))
+        (indices:i32* (halloc (* 6 6)))
+        (triverts:float* (halloc 108)))
+    (lambda ()
+      (pfill! verts
+        -.5 -.5 -.5
+        +.5 -.5 -.5
+        -.5 -.5 +.5
+        +.5 -.5 +.5
+        -.5 +.5 -.5
+        +.5 +.5 -.5
+        -.5 +.5 +.5
+        +.5 +.5 +.5)
+      ;   2--3
+      ;  /| /|
+      ; 0--1 |
+      ; | 6|-7
+      ; 4--5/
+      (pfill! indices
+        5 4 0  0 1 5  ; front
+        7 5 1  1 3 7  ; right
+        6 7 3  6 3 2  ; back
+        4 6 2  0 4 2  ; left
+        1 0 2  2 3 1  ; bottom
+        6 7 5  5 4 6  ; top
+        )
+      (dotimes (i (* 6 6))
+        (let* ((index (pref indices i))
+               (srcvert (pref-ptr verts (* index 3)))
+               (trivert (pref-ptr triverts (* i 3))))
+          (println index (pref srcvert 0) (pref srcvert 1) (pref srcvert 2))
+          (pfill! trivert (pref srcvert 0) (pref srcvert 1) (pref srcvert 2))
+          ))
+      triverts)))
+
+; XXXX not 100% sure if normals are correct
+(bind-func generate_cube_normals
+  (lambda (mesh:xtm_mesh*)
+    (let* ((i 0)
+          (vbostride:i64 14)
+          (vbo:VBO* (tref mesh 0))
+          (vbodata:float* (convert (tref vbo 3)))
+          (vbodatasize:i64 (tref vbo 2))
+          (nverts:i64 (/ vbodatasize vbostride 4))
+          (ntris:i64 (/ nverts 3)))
+      (dotimes (i ntris)
+        (let* ((k (* i 3 vbostride))
+               (pvert:float* (pref-ptr vbodata k))
+               (pnorm:float* (pref-ptr vbodata (+ k 4)))
+               (v0:float* (salloc 3))
+               (v1:float* (salloc 3))
+               (cross:float* (salloc 3)))
+          (vvsub (pref-ptr pvert (* vbostride 1)) (pref-ptr pvert (* vbostride 0)) 3 v0)
+          (vvsub (pref-ptr pvert (* vbostride 2)) (pref-ptr pvert (* vbostride 1)) 3 v1)
+          (vnormalise v0 3 v0)
+          (vnormalise v1 3 v1)
+          (vcrossf v0 v1 cross)
+          (vnormalise cross 3 cross)
+          (pfill! (pref-ptr pnorm (* vbostride 0)) (pref cross 0) (pref cross 1) (pref cross 2))
+          (pfill! (pref-ptr pnorm (* vbostride 1)) (pref cross 0) (pref cross 1) (pref cross 2))
+          (pfill! (pref-ptr pnorm (* vbostride 2)) (pref cross 0) (pref cross 1) (pref cross 2))
+          ))
+      (glBindBuffer GL_ARRAY_BUFFER (tref vbo 0))
+      (glBufferData GL_ARRAY_BUFFER (tref vbo 2) (tref vbo 3) GL_STATIC_DRAW)
+      void)))
+
+(bind-func create_cube_model
+  (lambda ()
+    (let ((model:xtm_node* (convert null))
+          (cubeverts:float* (get_cube_verts))
+          (tricount 12))
+      (set! model (xtm_make_node "cube"  cubeverts (convert (* tricount 3))  1.0 1.0 1.0))
+      (generate_cube_normals (tref model 6))
+    model)))
+
+(bind-func build_cube:[i64]*
+  "build a cube"
+  (lambda ()
+    (let* ((cube:xtm_node* (clone_xnode (create_cube_model)))
+           (snode:scene_node* (scene_build_node cube)))
+      (tref snode 3))))
+
+
+; ============= testing render stuff =============
+
+;; for lights and cameras
+(bind-func scene_prerender:XTMRENDERCB (lambda (frame shader m v p data)
+  (xtm_light_pos 1 -1000.0 500.0 1000.0)  ; XXX need large distances for some reason
+  (xtm_light_tgt 1 0.0 0.0 0.0)
+  (xtm_light_up 1 1.0 0.0 0.0)
+  (xtm_light_diffuse 1 0.8 0.9 1.0 1.0)
+  ;(xtm_light_diffuse 1 1.0 0.0 0.0 1.0)  ; red
+  ;(xtm_light_ambient 1 1.0 1.0 1.0 1.0)
+  (xtm_light_specular 1 0.0 0.0 0.0 0.0)  ; XXX specular lighting seems wrong wrt camera
+  (xtm_light_power 1 30.0)
+  (xtm_light_angle 1 10.0)
+
+  (xtm_light_pos 2 1000.0 -500.0 -500.0)
+  (xtm_light_tgt 2 0.0 0.0 0.0)
+  (xtm_light_up 2 1.0 0.0 0.0)
+  (xtm_light_diffuse 2 1. 0.9 0.8 1.0)
+  ;(xtm_light_diffuse 2 0.0 0.0 1.0 1.0) ; blue
+  ;(xtm_light_ambient 2 1.0 1.0 1.0 1.0)
+  (xtm_light_specular 2 0.0 0.0 0.0 0.0)
+  (xtm_light_power 2 30.0)
+  (xtm_light_angle 2 10.0)
+
+  (xtm_camera_pos 0. 0. -15.)
+  (xtm_camera_tgt 0.0 0.0 0.0)
+  (xtm_camera_up 0.0 1.0 0.0)
+
+;  (let ((t (/ (convert (now)) 44100.))
+;        (spd 1.0)
+;        (dist 15.0))
+;    (xtm_camera_pos (* dist (sin (* spd t))) 10.0 (* dist (cos (* spd t))))
+;    (xtm_camera_tgt 0.0 0.0 0.0)
+;    (xtm_camera_up 0.0 1.0 0.0))
+  void))
+
+(bind-func scene_render_recursive:XTMRENDERCB
+  (lambda (frame shader m v p data)
+    (let ((visit (lambda (lst:scene_list* parentworldmat:float*)
+      (for-each
+        (lambda (snode:scene_node*)
+          (let ((worldmat:float* (salloc 16)))
+            (_node_transmat_apply snode
+              (lambda (mat)
+                (mmul4f mat parentworldmat worldmat)))
+            (visit (convert (tref snode 2)) worldmat))
+          (xtm_draw_model (tref snode 0) shader parentworldmat v p)
+          void)
+        lst))))
+        (visit scene_root m)
+      void)))
+
+
+(bind-func scene_render
+  (lambda()
+    (xtm_render scene_prerender:XTMRENDERCB scene_render_recursive:XTMRENDERCB null null null)
+    void))
+
+
+(sys:load "libs/external/glfw3.xtm")
+(bind-val window GLFWwindow*)
+
+(bind-func create_window (lambda()
+  (cond ((not (null? window))
+    (glfw_destroy_window window)))
+  (set! window
+    ;; some of the shaders in the graphics pipeline use older glsl
+    ;; versions, so we need a "compatibility" graphics context
+    (begin
+      (glfwSetErrorCallback (convert (get_native_fptr glfw_error_callback)))
+      (glfw_init_and_create_interaction_compatibility_window 640 480)))))
+
+
+(bind-func scene_draw_loop
+  (let ((dtime:float (/ 1.0 30.0))
+        (started:i64 0)
+        (quit:i64 0))
+    (lambda (time:i64)
+      (if (= quit 0)
+        (begin
+          (set! started 1)
+          (scene_render)
+          (glfwPollEvents)
+          ;; swap buffers
+          (glfwSwapBuffers window)
+          ;; set next frame callback
+          (let ((next_time (+ time (convert (* 44100. dtime)))))
+            (callback next_time scene_draw_loop next_time)))
+        (begin
+          (set! started 0)
+          void))
+      void)))
+
+(define scene-fps
+  (lambda (fps)
+    (scene_draw_loop.dtime (/ 1.0 fps))))
+(define scene-start-drawing
+  (lambda ()
+    (if (<> 0 (scene_draw_loop.started))
+      (println 'scene-start-drawing: 'draw 'loop 'already 'running)
+      (begin
+        (scene_draw_loop.quit 0)
+        (scene_draw_loop (now))))))
+(define scene-stop-drawing
+  (lambda ()
+    (scene_draw_loop.quit 1)))
+
+(create_window)
+(xtm_render_setup
+  (call-as-xtlang (glfw_get_framebuffer_width window))
+  (call-as-xtlang (glfw_get_framebuffer_height window)))
+
+(scene-start-drawing)

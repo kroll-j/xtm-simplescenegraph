@@ -1,0 +1,100 @@
+(sys:load "simplescenegraph.xtm")
+
+
+(begin
+    (scene_clear)
+
+    (let ((solar-system (build_node))
+          (star (build_sphere 3))   ; make a sphere built from subdivided octahedron, with 8*(4^3)=512 tris
+          (planet-orbit (build_node))
+          (planet (build_sphere 2)) ; 8*(4^2)=128 tris
+          (planet-moon-orbit (build_node))
+          (moon-orbit (build_node))
+          (moon (build_sphere 1))   ; the moon is smaller, so it doesn't need as much detail
+          (borgcube-orbit (build_node)) ; and like in every decent solar system
+          (borgcube (build_cube))       ; we have a borg cube orbiting a planet
+          )
+      (with-node moon
+        (name "moon")
+        (color 1. 1. 1.) ; coloring doesn't work properly yet
+        (scale .5 .5 .5)
+        (parent moon-orbit))
+      (with-node moon-orbit
+        (name "moon-orbit")
+        (translate 1.4 0 0)
+        (parent planet-moon-orbit))
+      (with-node planet-moon-orbit
+        (name "planet-moon-orbit")
+        (parent planet-orbit)
+        (animate (/ 1.0 30.0)
+          (lambda (node time dtime)
+            (rotate_node 0.07  0. 1. 0.)
+            #t)))
+      (with-node planet
+        (name "planet")
+        (scale 1 1 1)
+        (color 0. 1. 1.)
+        (parent planet-orbit))
+      (with-node planet-orbit
+        (name "planet-orbit")
+        (translate 4 0 0)
+        (parent solar-system))
+      (with-node star
+        (name "star")
+        (color 1. 1. 0.)
+        (scale 2.5 2.5 2.5)
+        (parent solar-system))
+      (with-node solar-system
+        (name "solar-system")
+        (animate (/ 1.0 30.0)
+          (lambda (node time dtime)
+            (rotate_node 0.02  0. 1. 0.)
+            #t)))
+      (with-node borgcube-orbit
+        (name "borgcube-orbit")
+        (parent planet-orbit)
+        (animate (/ 1 30)
+          (lambda (node time dtime)
+            (rotate_node 0.03  0 0 1))))
+      (with-node borgcube
+        (name "borgcube")
+        (translate .95 0 0)
+        (scale .5 .5 .5)
+        (parent borgcube-orbit)
+        (animate (/ 1 30)
+          (lambda (node time dtime)
+            (rotate_node 0.05  1 0 1))))
+      (with-node 0  ; world
+        (identity)
+        (scale 1.2 1.4 1.4)
+        (rotate_node 0.3  1 0 0))
+      (println 'scene 'graph:)
+      (print_scene_graph)
+    ))
+
+(println (get_current_node_id))
+(print_scene_graph)
+
+(set_current_node_id 0)
+(build_sphere 2)
+(print_scene_graph)
+(scene-fps 30)
+(scene_clear)
+
+(scene-start-drawing)
+(scene-stop-drawing)
+
+(begin
+  (scene_clear)
+  (with-node (build_cube)
+    (scale 5 5 5)
+    (rotate_node (/ PI 5)  0 1 0)
+    (animate (/ 1 30)
+      (lambda (node time dtime)
+        (rotate_node 0.05  1 0 0)
+        #t))
+    ))
+
+
+(println (get_cube_verts))
+(xtm_make_node "cube"  (get_cube_verts) (* 12 3)  1.0 1.0 1.0)
