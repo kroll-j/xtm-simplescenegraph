@@ -422,7 +422,9 @@
                 (pref vbodata (+ 1 (* i vbostride)))
                 (pref vbodata (+ 2 (* i vbostride))))
         (vnormalise (pref-ptr vbodata (+ 4 (* i vbostride))) 3
-                    (pref-ptr vbodata (+ 4 (* i vbostride)))))
+                    (pref-ptr vbodata (+ 4 (* i vbostride))))
+        (vsmul (pref-ptr vbodata (+ 4 (* i vbostride))) -1. 3
+          (pref-ptr vbodata (+ 4 (* i vbostride)))))
       (glBindBuffer GL_ARRAY_BUFFER (tref vbo 0))
       (glBufferData GL_ARRAY_BUFFER (tref vbo 2) (tref vbo 3) GL_STATIC_DRAW)
       void)))
@@ -554,7 +556,7 @@
         6 7 3  6 3 2  ; back
         4 6 2  0 4 2  ; left
         1 0 2  2 3 1  ; bottom
-        6 7 5  5 4 6  ; top
+        5 7 6  4 5 6  ; top
         )
       (dotimes (i (* 6 6))
         (let* ((index (pref indices i))
@@ -617,25 +619,28 @@
 
 ;; for lights and cameras
 (bind-func scene_prerender:XTMRENDERCB (lambda (frame shader m v p data)
-  (xtm_light_pos 1 -1000.0 500.0 1000.0)  ; XXX need large distances for some reason
+  (xtm_light_pos 1 -10.0 5.0 10.0)  ; XXX need large distances for some reason
   (xtm_light_tgt 1 0.0 0.0 0.0)
   (xtm_light_up 1 1.0 0.0 0.0)
   (xtm_light_diffuse 1 0.8 0.9 1.0 1.0)
-  ;(xtm_light_diffuse 1 1.0 0.0 0.0 1.0)  ; red
+  (xtm_light_diffuse 1 1.0 0.0 0.0 1.0)  ; red
   ;(xtm_light_ambient 1 1.0 1.0 1.0 1.0)
   (xtm_light_specular 1 0.0 0.0 0.0 0.0)  ; XXX specular lighting seems wrong wrt camera
   (xtm_light_power 1 30.0)
   (xtm_light_angle 1 10.0)
 
-  (xtm_light_pos 2 1000.0 -500.0 -500.0)
+  (if #t (begin
+  (xtm_light_pos 2 10.0 -5.0 -50.0)
   (xtm_light_tgt 2 0.0 0.0 0.0)
   (xtm_light_up 2 1.0 0.0 0.0)
   (xtm_light_diffuse 2 1. 0.9 0.8 1.0)
   ;(xtm_light_diffuse 2 0.0 0.0 1.0 1.0) ; blue
+  (xtm_light_diffuse 2 0.5 0.75 1.0 1.0) ; blue-ish
   ;(xtm_light_ambient 2 1.0 1.0 1.0 1.0)
   (xtm_light_specular 2 0.0 0.0 0.0 0.0)
   (xtm_light_power 2 30.0)
   (xtm_light_angle 2 10.0)
+  ))
 
   (xtm_camera_pos 0. 0. -15.)
   (xtm_camera_tgt 0.0 0.0 0.0)

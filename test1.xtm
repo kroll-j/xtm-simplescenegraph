@@ -16,7 +16,7 @@
           )
       (with-node moon
         (name "moon")
-        (color 1. 1. 1.) ; coloring doesn't work properly yet
+        (color 1. 1. 1.) ; coloring doesn't work properly yet (does it???)
         (scale .5 .5 .5)
         (parent moon-orbit))
       (with-node moon-orbit
@@ -41,7 +41,7 @@
         (parent solar-system))
       (with-node star
         (name "star")
-        (color 1. 1. 0.)
+        (color 1. .5 0.)
         (scale 2.5 2.5 2.5)
         (parent solar-system))
       (with-node solar-system
@@ -60,6 +60,7 @@
         (name "borgcube")
         (translate .95 0 0)
         (scale .5 .5 .5)
+        (color 1 0 0)
         (parent borgcube-orbit)
         (animate (/ 1 30)
           (lambda (node time dtime)
@@ -71,6 +72,27 @@
       (println 'scene 'graph:)
       (print_scene_graph)
     ))
+
+(define do-world-anim #t)
+(define do-world-anim #f)
+(with-node 0
+  (animate (/ 1.0 30.0)
+    (lambda (node time dtime)
+      (if do-world-anim
+        (begin
+          (identity)
+          (rotate_node 0.3  1 0 0)
+          (scale 1.2 1.4 1.4)
+          (let* ((t (* time 0.00008))
+                 (s (* (sin t) 1.5)))
+            (scale s s s)
+            #t))
+        #f))))
+
+(with-node 0
+  (identity))
+
+(scene_clear)
 
 (println (get_current_node_id))
 (print_scene_graph)
@@ -88,7 +110,7 @@
   (scene_clear)
   (with-node (build_cube)
     (scale 5 5 5)
-    (rotate_node (/ PI 5)  0 1 0)
+    (rotate_node 0.5  0 1 0)
     (animate (/ 1 30)
       (lambda (node time dtime)
         (rotate_node 0.05  1 0 0)
