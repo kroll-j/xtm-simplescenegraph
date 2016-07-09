@@ -123,7 +123,7 @@
 (begin
   (let ((i 0))
     (dotimes (i 10000)
-      (with-node (build_cube)
+      (with-node (build_node)
         (freenode)))
   (print_scene_graph)))
 (begin
