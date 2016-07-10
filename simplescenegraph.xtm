@@ -579,7 +579,6 @@
           ))
       triverts)))
 
-; XXXX not 100% sure if normals are correct
 (bind-func generate_cube_normals
   (lambda (mesh:xtm_mesh*)
     (let* ((i 0)
