@@ -245,7 +245,6 @@
     (_node_transmat_apply node (lambda(mat) (scale_matrix mat (convert x) (convert y) (convert z))))
     void))
 
-; xxx todo: doesn't work yet, colors multiple nodes for some reason
 (bind-func node_color:[void,scene_node*,!a,!b,!c]*
   "set node color"
   (lambda (snode:scene_node* r g b)
