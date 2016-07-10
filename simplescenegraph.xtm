@@ -633,25 +633,25 @@
 
 ;; for lights and cameras
 (bind-func scene_prerender:XTMRENDERCB (lambda (frame shader m v p data)
-  (xtm_light_pos 1 -10.0 5.0 10.0)  ; XXX need large distances for some reason
+  (xtm_light_pos 1 -10.0 5.0 -12.0)
   (xtm_light_tgt 1 0.0 0.0 0.0)
-  (xtm_light_up 1 1.0 0.0 0.0)
+  (xtm_light_up 1 0.0 1.0 0.0)
   (xtm_light_diffuse 1 0.8 0.9 1.0 1.0)
   (xtm_light_diffuse 1 1.0 0.0 0.0 1.0)  ; red
   ;(xtm_light_ambient 1 1.0 1.0 1.0 1.0)
-  (xtm_light_specular 1 0.0 0.0 0.0 0.0)  ; XXX specular lighting seems wrong wrt camera
-  (xtm_light_power 1 30.0)
+  (xtm_light_specular 1 0.0 1.0 0.0 1.0)  ; XXX specular lighting seems wrong wrt camera
+  (xtm_light_power 1 50.0)
   (xtm_light_angle 1 10.0)
 
   (if #t (begin
-  (xtm_light_pos 2 10.0 -5.0 -50.0)
+  (xtm_light_pos 2 10.0 -20.0 -50.0)
   (xtm_light_tgt 2 0.0 0.0 0.0)
-  (xtm_light_up 2 1.0 0.0 0.0)
+  (xtm_light_up 2 0.0 1.0 0.0)
   (xtm_light_diffuse 2 1. 0.9 0.8 1.0)
   ;(xtm_light_diffuse 2 0.0 0.0 1.0 1.0) ; blue
   (xtm_light_diffuse 2 0.5 0.75 1.0 1.0) ; blue-ish
   ;(xtm_light_ambient 2 1.0 1.0 1.0 1.0)
-  (xtm_light_specular 2 0.0 0.0 0.0 0.0)
+  (xtm_light_specular 2 0.0 0.0 1.0 1.0)
   (xtm_light_power 2 30.0)
   (xtm_light_angle 2 10.0)
   ))
