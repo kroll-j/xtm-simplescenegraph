@@ -16,49 +16,49 @@
           (borgcube (build_cube))       ; we have a borg cube orbiting a planet
           )
       (with-node moon
-        (name "moon")
+        (setname "moon")
         (color 1. 1. 1.)
         (scale .5 .5 .5)
         (parent moon-orbit))
       (with-node moon-orbit
-        (name "moon-orbit")
+        (setname "moon-orbit")
         (translate 1.4 0 0)
         (parent planet-moon-orbit))
       (with-node planet-moon-orbit
-        (name "planet-moon-orbit")
+        (setname "planet-moon-orbit")
         (parent planet-orbit)
         (animate (/ 1.0 30.0)
           (lambda (node time dtime)
             (rotate_node 0.07  0. 1. 0.)
             #t)))
       (with-node planet
-        (name "planet")
+        (setname "planet")
         (scale 1 1 1)
         (color 0. 1. 1.)
         (parent planet-orbit))
       (with-node planet-orbit
-        (name "planet-orbit")
+        (setname "planet-orbit")
         (translate 4 0 0)
         (parent solar-system))
       (with-node star
-        (name "star")
+        (setname "star")
         (color 1. .5 0.)
         (scale 2.5 2.5 2.5)
         (parent solar-system))
       (with-node solar-system
-        (name "solar-system")
+        (setname "solar-system")
         (animate (/ 1.0 30.0)
           (lambda (node time dtime)
             (rotate_node 0.02  0. 1. 0.)
             #t)))
       (with-node borgcube-orbit
-        (name "borgcube-orbit")
+        (setname "borgcube-orbit")
         (parent planet-orbit)
         (animate (/ 1 30)
           (lambda (node time dtime)
             (rotate_node 0.03  0 0 1))))
       (with-node borgcube
-        (name "borgcube")
+        (setname "borgcube")
         (translate .95 0 0)
         (scale .3 .3 .3)
         (color 0 1 0)
@@ -73,3 +73,6 @@
       (println 'scene 'graph:)
       (print_scene_graph)
     ))
+
+(scene-start-drawing)
+(scene-stop-drawing)
